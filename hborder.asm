@@ -1,11 +1,6 @@
 BasicUpstart2(begin)				// <- This creates a basic sys line that can start your program
 * = $1000 "Main Program"    // <- The name 'Main program' will appear in the memory map when assembling   jsr clear
 
-// Const
-.const ENTER = $C202
-.const MOVE  = $C203
-.const HALF  = $C204
-
 // Main
 begin:
   sei							// Disable interrupts
@@ -22,6 +17,8 @@ begin:
   sta $0315
   lda #%00000001	// Enable raster interrupt to VIC
   sta $d01a
+  lda #29
+  sta yloc
   
   asl $d019				// Ack any previous raster interrupt
   bit $dc0d				// reading the interrupt control registers 
@@ -30,17 +27,12 @@ begin:
 	lda #00					// Clear border garbage
 	sta $3fff
 
-	lda #13					// Initialize the Sprite registers
-	sta ENTER
-
 	lda #$0D				// Using block 13 for Sprite 0
 	sta $7f8
 	lda #$0E				// Using block 13 for Sprite 0
 	sta $7f9
 	lda #$0F				// Using block 13 for Sprite 0
 	sta $7fA
-
-
 
 	lda #%00000111					// Enable sprite 0
 	sta $D015
@@ -63,10 +55,11 @@ begin:
 	ldx #196				// Set X position of sprite 2
 	stx $D004
 
-	ldy #70					// Set Y position of sprite
-	sty $D001				// Set y for sprite 0
-	sty $D003				// Set y for sprite 1
-	sty $D005				// Set y for sprite 2
+	lda #30			// start of logo (30)
+	sta yloc
+	sta $D001				// Set y for sprite 0
+	sta $D003				// Set y for sprite 1
+	sta $D005				// Set y for sprite 2
 
 	lda #%00000111	// sprite 0-2 double size 
 	sta $D01D				// Double X
@@ -87,30 +80,59 @@ begin:
   cli
 
 	rts
-
 	jmp *			// Endless loop
 
-// Interrupt handler set screen to 25 colums
-irq_25:
-	lda #7					// Border to yellow
-	sta $d020
 
-	lda $d011				// Set bit 3 to enable 25 line mode
-	ora #%00001000
-	sta $d011
+irq_top_sprites:
+	lda #1                                  // Border to white
+        sta $d020
+        sta $d021
 
-	lda #249				// raster interrupt at the end of the screen
-	sta $d012 
-	lda #<irq_24
-	ldx #>irq_24
-	sta $0314
-	stx $0315
+	lda #55                                // raster interrupt just a bit lower of the screen
+        sta $d012
+        lda #<irq_midway
+        ldx #>irq_midway
+        sta $0314
+        stx $0315
 
-	lda #0					// Border to black
-	sta $d020
+	// if dingen ?
+	lda sprites_0_nreg: #$00	// Disable sprite 0-2
+	sta $d015
 
-  asl $d019				// Acknowledge interrupt 
-  jmp $ea81				// Jump to kernal interrupt routine
+	lda #0                                  // Border to black
+        sta $d020
+        sta $d021
+
+  asl $d019                             // Acknowledge interrupt 
+  jmp $ea81                             // Jump to kernal interrupt routine
+
+irq_midway:
+	lda #1                                  // Border to white
+        sta $d020
+        sta $d021
+
+	lda #249                                // raster interrupt just a bit lower of the screen
+        sta $d012
+        lda #<irq_24
+        ldx #>irq_24
+        sta $0314
+        stx $0315
+
+	lda firstrun
+	bne skip
+	lda #%00000111
+	sta $d015
+skip:
+	lda $02
+	sta firstrun
+
+	lda #0                                  // Border to black
+        sta $d020
+        sta $d021
+
+  asl $d019                             // Acknowledge interrupt 
+  jmp $ea81                             // Jump to kernal interrupt routine
+
 
 // Interrupt handler set screen to 24 columns 
 irq_24:
@@ -121,50 +143,71 @@ irq_24:
 	and #%11110111
 	sta $d011
 
-	lda #252				// raster interrupt at the beginning of the screen
+	lda #252				// raster interrupt just a bit lower of the screen
 	sta $d012
 	lda #<irq_25
 	ldx #>irq_25
 	sta $0314
 	stx $0315
 
+	lda $dc01	// read kbd matrix 
+	cmp #$ef	// space	
+	bne !over+
+	
+	clc
+	lda #252
+	sbc yloc
+	bcs !kill_top_sprites+
+	lda #$00
+	sta sprites_0_nreg		
+!kill_top_sprites:
+
+	inc yloc // increment y pos
+	lda yloc
+	bne overflow
+	adc #01
+overflow:
+
+	sta $D001                             // Sprite position Y inc 0
+        sta $D003                             // Sprite position Y inc 1
+        sta $D005                             // Sprite position Y inc 2
+	sta $0400	// counter char thing
+!over:
+
 	lda #0					// Border to black
 	sta $d020
-
-	inc $D001				// Sprite position Y inc 0
-	inc $D003				// Sprite position Y inc 1
-	inc $D005				// Sprite position Y inc 2
 
   asl $d019				// Acknowledge interrupt 
   jmp $ea81				// Jump to kernal interrupt routine
 
+// Interrupt handler set screen to 25 colums
+irq_25:
+	lda #7					// Border to yellow
+	sta $d020
+
+	lda $d011				// Set bit 3 to enable 25 line mode
+	ora #%00001000
+	sta $d011
+
+	lda #00				// raster interrupt at the end of the screen
+	sta $d012 
+	lda #<irq_top_sprites
+	ldx #>irq_top_sprites
+	sta $0314
+	stx $0315
+
+	lda #0					// Border to black
+	sta $d020
+
+  asl $d019				// Acknowledge interrupt 
+  jmp $ea81				// Jump to kernal interrupt routine
+
+yloc: .byte $00, $00
+firstrun: .byte $00
+
 // define the sprite data
 .pc = $3000 "Sprite"
 .align $40
-
-data_balloon:
-// Baloon sprite 
-//.byte 1,254,0
-//.byte 6,1,128
-//.byte 8,0,64
-//.byte 13,85,192
-//.byte 16,0,32
-//.byte 19,128,32
-//.byte 18,64,32
-//.byte 18,73,32
-//.byte 19,149,160
-//.byte 18,157,96
-//.byte 10,85,64
-//.byte 4,0,128
-//.byte 6,171,128
-//.byte 2,1,0
-//.byte 1,2,0
-//.byte 0,252,0
-//.byte 0,132,0
-//.byte 0,164,0
-//.byte 1,254,0
-//.byte 1,86,0
-//.byte 1,254,0
 
 ;// sprite0
 defeest_sprite0:
